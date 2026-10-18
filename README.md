@@ -35,12 +35,12 @@ This server wraps the current free Artificial Analysis API endpoints documented 
 
 | Artificial Analysis endpoint | MCP tool |
 |---|---|
-| `GET /api/v2/data/llms/models` | `aa_list_llms`, `aa_get_model`, `aa_compare_models`, `aa_list_recent_updates`, `aa_healthcheck` |
-| `GET /api/v2/data/media/text-to-image` | `aa_list_media_models(modality="text-to-image")` |
-| `GET /api/v2/data/media/image-editing` | `aa_list_media_models(modality="image-editing")` |
-| `GET /api/v2/data/media/text-to-speech` | `aa_list_media_models(modality="text-to-speech")` |
-| `GET /api/v2/data/media/text-to-video` | `aa_list_media_models(modality="text-to-video")` |
-| `GET /api/v2/data/media/image-to-video` | `aa_list_media_models(modality="image-to-video")` |
+| `GET /api/v2/language/models/free` | `aa_list_llms`, `aa_get_model`, `aa_compare_models`, `aa_list_recent_updates`, `aa_healthcheck` |
+| `GET /api/v2/media/text-to-image/models/free` | `aa_list_media_models(modality="text-to-image")` |
+| `GET /api/v2/media/image-editing/models/free` | `aa_list_media_models(modality="image-editing")` |
+| `GET /api/v2/media/text-to-speech/models/free` | `aa_list_media_models(modality="text-to-speech")` |
+| `GET /api/v2/media/text-to-video/models/free` | `aa_list_media_models(modality="text-to-video")` |
+| `GET /api/v2/media/image-to-video/models/free` | `aa_list_media_models(modality="image-to-video")` |
 | `POST /api/v2/critpt/evaluate` | `aa_evaluate_critpt` |
 
 ## MCP Tools

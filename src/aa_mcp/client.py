@@ -9,6 +9,10 @@ import httpx
 
 AA_BASE_URL = "https://artificialanalysis.ai/api/v2"
 DEFAULT_TIMEOUT = 30.0
+MAX_PAGES = 50
+# Legacy /api/v2/data/* endpoints retire 2026-11-04 23:59 UTC (410 Gone).
+# https://artificialanalysis.ai/data-api/migrate-v2-data
+LLM_ENDPOINT = "/language/models/free"
 
 
 class AAError(Exception):
@@ -114,21 +118,35 @@ class AAClient:
         _check_response(resp)
         return resp.json()
 
+    def _get_all(self, path: str, params: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Fetch every page of a paginated endpoint (``pagination.has_more``)."""
+        rows: list[dict[str, Any]] = []
+        first: dict[str, Any] = {}
+        for page in range(1, MAX_PAGES + 1):
+            data = self._get(path, {**(params or {}), "page": page})
+            if page == 1:
+                first = data
+            rows.extend(r for r in data.get("data", []) if isinstance(r, dict))
+            pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
+            if not pagination.get("has_more"):
+                return rows, first
+        raise AARequestError(f"{path}: more than {MAX_PAGES} pages")
+
     # ── LLM endpoints ──────────────────────────────────────────────
 
     def get_llm_models(self) -> list[dict[str, Any]]:
         """Fetch all LLM models with evaluations, pricing, and speed data."""
-        data = self._get("/data/llms/models")
-        return data.get("data", [])
+        rows, _ = self._get_all(LLM_ENDPOINT)
+        return [normalize_llm(r) for r in rows]
 
     # ── Media endpoints ─────────────────────────────────────────────
 
     MEDIA_ENDPOINTS = {
-        "text-to-image": "/data/media/text-to-image",
-        "image-editing": "/data/media/image-editing",
-        "text-to-speech": "/data/media/text-to-speech",
-        "text-to-video": "/data/media/text-to-video",
-        "image-to-video": "/data/media/image-to-video",
+        "text-to-image": "/media/text-to-image/models/free",
+        "image-editing": "/media/image-editing/models/free",
+        "text-to-speech": "/media/text-to-speech/models/free",
+        "text-to-video": "/media/text-to-video/models/free",
+        "image-to-video": "/media/image-to-video/models/free",
     }
 
     def get_media_models(
@@ -142,8 +160,8 @@ class AAClient:
         params = {}
         if include_categories:
             params["include_categories"] = "true"
-        data = self._get(endpoint, params)
-        return data.get("data", [])
+        rows, _ = self._get_all(endpoint, params)
+        return normalize_media(rows)
 
     # ── CritPt endpoint ─────────────────────────────────────────────
 
@@ -162,11 +180,47 @@ class AAClient:
     # ── Healthcheck ─────────────────────────────────────────────────
 
     def healthcheck(self) -> dict[str, Any]:
-        """Run a lightweight connectivity + auth check by fetching LLM models."""
-        data = self._get("/data/llms/models")
-        model_count = len(data.get("data", []))
+        """Connectivity + auth check; walks every page so model_count is the full total."""
+        rows, first = self._get_all(LLM_ENDPOINT)
+        pagination = first.get("pagination") if isinstance(first.get("pagination"), dict) else {}
         return {
             "ok": True,
-            "model_count": model_count,
-            "prompt_options": data.get("prompt_options", {}),
+            "model_count": len(rows),
+            "total_pages": pagination.get("total_pages"),
+            "tier": first.get("tier"),
+            "prompt_options": first.get("prompt_options", {}),
         }
+
+
+def normalize_llm(m: dict[str, Any]) -> dict[str, Any]:
+    """Map a v2 free-tier record back to the legacy flat shape the tools expect.
+
+    Speed/latency moved under ``performance``; ``price_1m_blended_3_to_1`` is no
+    longer returned, so it is derived as (3*input + output) / 4.
+    """
+    out = dict(m)
+    perf = m.get("performance")
+    if isinstance(perf, dict):
+        for key, value in perf.items():
+            out.setdefault(key, value)
+        out.setdefault("median_time_to_first_answer_token", perf.get("median_time_to_first_answer_token_seconds"))
+    pricing = dict(m.get("pricing") or {})
+    inp, outp = pricing.get("price_1m_input_tokens"), pricing.get("price_1m_output_tokens")
+    if pricing.get("price_1m_blended_3_to_1") is None and isinstance(inp, (int, float)) and isinstance(outp, (int, float)):
+        pricing["price_1m_blended_3_to_1"] = round((3 * inp + outp) / 4, 6)
+    out["pricing"] = pricing
+    return out
+
+
+def normalize_media(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """v2 media rows carry ``ci_95`` and no ``rank``; restore both (rank by Elo)."""
+    out = []
+    for m in rows:
+        item = dict(m)
+        if "ci95" not in item and item.get("ci_95") is not None:
+            item["ci95"] = item["ci_95"]
+        out.append(item)
+    ranked = sorted(out, key=lambda r: -(r.get("elo") or 0))
+    for index, item in enumerate(ranked, start=1):
+        item.setdefault("rank", index)
+    return out
